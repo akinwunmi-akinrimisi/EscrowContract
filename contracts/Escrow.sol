@@ -32,12 +32,12 @@ contract Escrow {
         uint deliveryTimestamp;  // Expected delivery timestamp set by seller
         bool isDisputed;
 
-        Buyer private buyer;
-        Seller private seller;
+        Buyer buyer;
+        Seller seller;
     }
 
     // Enum for order status
-    enum OrderStatus { Pending, SellerConfirmed, BuyerFunded, Delivered, BuyerConfirmed, Released, Refunded, cancelled }
+      enum OrderStatus { Pending, SellerConfirmed, BuyerFunded, Delivered, BuyerConfirmed, Released, Refunded, Canceled }
 
     // Mapping to store orders by ID
     mapping(uint => Order) public orders;
