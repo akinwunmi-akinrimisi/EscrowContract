@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
 contract Escrow {
 
@@ -7,100 +7,98 @@ contract Escrow {
     struct Buyer {
         address buyerAddress;
         uint totalSpent;
-        uint refundBalance; // Amount to be refunded due to penalties or other reasons
-        uint penaltyAmount; // Penalty applied to the buyer due to delays
-        bool isConfirmed; // Has the buyer confirmed receipt?
+        bool isConfirmed;
+        uint refundBalance;
+        uint penaltyAmount;
     }
 
     // Struct for tracking seller information
     struct Seller {
         address sellerAddress;
         uint totalEarned;
-        uint finalAmountToReceive; // Final amount seller will receive after deductions
-        uint penaltyAmount; // Penalty applied to the seller (if any)
-        bool isConfirmed; // Has the seller confirmed delivery?
+        bool isConfirmed;
+        uint finalAmountToReceive;
+        uint penaltyAmount;
     }
-    
+
     // Struct for tracking an order
     struct Order {
         uint orderID;
-        Buyer buyer;
-        Seller seller;
         uint orderAmount;
+        uint quantity;
         uint escrowBalance;
         OrderStatus status;
         uint creationTimestamp;
         uint expirationTimestamp;
         bool isDisputed;
+
+        Buyer private buyer;
+        Seller private seller;
     }
-    
+
     // Enum for order status
     enum OrderStatus { Pending, Delivered, Confirmed, Disputed, Released, Refunded }
 
-    // Struct for delay-based penalties
-    struct Penalty {
-        uint expirationTime;
-        uint delayStartTimestamp;
-        uint lastPenaltyAppliedTimestamp;
-        uint deductionBalance;
-        uint finalAmountToSeller;
-        uint refundToBuyer;
-        bool penaltyAccrued;
-        bool penaltyThresholdReached;
-    }
-    
-    // Struct for dispute information
-    struct Dispute {
-        DisputeStatus status;
-        string resolution;
-        uint disputeTimestamp;
-    }
-
-    // Enum for dispute status
-    enum DisputeStatus { None, Pending, Resolved }
-    
-    // Struct for security and configuration
-    struct EscrowConfig {
-        uint escrowFee; // e.g., 2% fee in basis points (200 = 2%)
-        address feeRecipient;
-        bool paused;
-        address emergencyAdmin;
-    }
-
-    // Main mapping to store orders by ID
+    // Mapping to store orders by ID
     mapping(uint => Order) public orders;
 
-    // Mapping to store penalties for each order
-    mapping(uint => Penalty) public penalties;
-    
-    // Mapping to store dispute information for each order
-    mapping(uint => Dispute) public disputes;
+    // Counter for generating unique order IDs
+    uint public orderCounter;
 
-    // Escrow contract configuration
-    EscrowConfig public escrowConfig;
+    // Penalty constants
+    uint public constant penaltyRate = 2; // 2% deduction every 24 hours
+    uint public constant penaltyInterval = 86400; // 24 hours in seconds
 
-    // Time-based constants
-    uint public constant penaltyWindow = 86400; // 24 hours in seconds
-    uint public delayPenaltyRate = 2; // 2% per 24 hours delay
-    uint public maxPenaltyCap = 50; // Maximum 50% penalty cap
+    // Events for order-related actions
+    event OrderCreated(uint indexed orderID, address indexed buyer, address indexed seller, uint orderAmount, uint quantity);
+    event PenaltyDeducted(uint orderID, uint penaltyAmount, uint remainingEscrowBalance);
 
-    // Events (to log key actions)
-    event OrderCreated(uint orderID, address buyer, address seller, uint orderAmount);
-    event FundsDeposited(uint orderID, uint amount);
-    event DeliveryConfirmed(uint orderID);
-    event ReceiptConfirmed(uint orderID);
-    event DisputeInitiated(uint orderID);
-    event FundsReleased(uint orderID, uint amountToSeller, uint amountToBuyer);
+    // Function to create a new order
+    function createOrder(
+        address _sellerAddress,
+        uint _orderAmount,
+        uint _quantity
+    ) public {
+        require(_sellerAddress != address(0), "Invalid seller address");
+        require(_orderAmount > 0, "Order amount must be greater than zero");
+        require(_quantity > 0, "Quantity must be greater than zero");
 
-    // Constructor to initialize escrow configuration
-    constructor(uint _escrowFee, address _feeRecipient, address _emergencyAdmin) {
-        escrowConfig = EscrowConfig({
-            escrowFee: _escrowFee,
-            feeRecipient: _feeRecipient,
-            paused: false,
-            emergencyAdmin: _emergencyAdmin
+        // Increment order counter to generate unique orderID
+        orderCounter++;
+
+        // Create a new buyer and seller
+        Buyer memory newBuyer = Buyer({
+            buyerAddress: msg.sender,
+            totalSpent: _orderAmount,
+            isConfirmed: false,
+            refundBalance: 0,
+            penaltyAmount: 0
         });
+
+        Seller memory newSeller = Seller({
+            sellerAddress: _sellerAddress,
+            totalEarned: 0,
+            isConfirmed: false,
+            finalAmountToReceive: 0,
+            penaltyAmount: 0
+        });
+
+        // Create a new order
+        orders[orderCounter] = Order({
+            orderID: orderCounter,
+            orderAmount: _orderAmount,
+            quantity: _quantity,
+            escrowBalance: _orderAmount,
+            status: OrderStatus.Pending,
+            creationTimestamp: block.timestamp,
+            expirationTimestamp: block.timestamp + 30 days,
+            isDisputed: false,
+            buyer: newBuyer,
+            seller: newSeller
+        });
+
+        // Emit event for order creation
+        emit OrderCreated(orderCounter, msg.sender, _sellerAddress, _orderAmount, _quantity);
     }
-    
-    // Additional functions for managing orders, penalties, and disputes will be added here
+
 }
