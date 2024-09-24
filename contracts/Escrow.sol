@@ -7,7 +7,7 @@ contract Escrow {
     struct Buyer {
         address buyerAddress;
         uint totalSpent;
-        bool isConfirmed;
+        bool hasConfirmedReceipt;
         uint refundBalance;
         uint penaltyAmount;
     }
@@ -16,7 +16,7 @@ contract Escrow {
     struct Seller {
         address sellerAddress;
         uint totalEarned;
-        bool isConfirmed;
+        bool hasDelivered;
         uint finalAmountToReceive;
         uint penaltyAmount;
     }
@@ -37,7 +37,7 @@ contract Escrow {
     }
 
     // Enum for order status
-    enum OrderStatus { Pending, Confirmed, Delivered, Disputed, Released, Refunded }
+    enum OrderStatus { Pending, SellerConfirmed, BuyerFunded, Delivered, BuyerConfirmed, Released, Refunded }
 
     // Mapping to store orders by ID
     mapping(uint => Order) public orders;
@@ -51,11 +51,13 @@ contract Escrow {
 
     // Events for order-related actions
     event OrderCreated(uint indexed orderID, address indexed buyer, address indexed seller, uint orderAmount, uint quantity);
-    event DeliveryConfirmed(uint indexed orderID, uint deliveryPeriod);
-    event FundsLocked(uint indexed orderID, uint amountLocked);
-    event PenaltyApplied(uint indexed orderID, uint penaltyAmount, uint totalRefunded);
+    event SellerConfirmed(uint indexed orderID, uint deliveryPeriod);
+    event BuyerFunded(uint indexed orderID, uint amountLocked);
+    event OrderDeliveredBySeller(uint indexed orderID);
+    event ReceiptConfirmedByBuyer(uint indexed orderID);
+    event FundsReleased(uint indexed orderID, uint amountReleased, uint penaltyDeducted);
 
-    // Function to create a new order (no money sent at this stage)
+    // Function to create a new order (buyer creates the order)
     function createOrder(
         address _sellerAddress,
         uint _orderAmount,
@@ -72,7 +74,7 @@ contract Escrow {
         Buyer memory newBuyer = Buyer({
             buyerAddress: msg.sender,
             totalSpent: 0,  // Funds not yet locked
-            isConfirmed: false,
+            hasConfirmedReceipt: false,
             refundBalance: 0,
             penaltyAmount: 0
         });
@@ -80,7 +82,7 @@ contract Escrow {
         Seller memory newSeller = Seller({
             sellerAddress: _sellerAddress,
             totalEarned: 0,
-            isConfirmed: false,
+            hasDelivered: false,
             finalAmountToReceive: 0,
             penaltyAmount: 0
         });
@@ -103,12 +105,12 @@ contract Escrow {
         emit OrderCreated(orderCounter, msg.sender, _sellerAddress, _orderAmount, _quantity);
     }
 
-    // Function for the seller to confirm delivery with a specified delivery period
-    function confirmDeliveryBySeller(uint orderID, uint deliveryPeriodInDays) public {
+    // Function for the seller to confirm availability and delivery date
+    function confirmOrderBySeller(uint orderID, uint deliveryPeriodInDays) public {
         Order storage order = orders[orderID];
 
         // Ensure only the seller of the order can call this function
-        require(msg.sender == order.seller.sellerAddress, "Only the seller can confirm delivery");
+        require(msg.sender == order.seller.sellerAddress, "Only the seller can confirm the order");
 
         // Ensure the order is still pending
         require(order.status == OrderStatus.Pending, "Order must be in pending state");
@@ -116,14 +118,14 @@ contract Escrow {
         // Set the delivery timestamp based on the period specified by the seller
         order.deliveryTimestamp = block.timestamp + (deliveryPeriodInDays * 1 days);
 
-        // Update the order status to Confirmed
-        order.status = OrderStatus.Confirmed;
+        // Update the order status to SellerConfirmed
+        order.status = OrderStatus.SellerConfirmed;
 
-        // Emit event for delivery confirmation
-        emit DeliveryConfirmed(orderID, deliveryPeriodInDays);
+        // Emit event for seller confirmation
+        emit SellerConfirmed(orderID, deliveryPeriodInDays);
     }
 
-    // Function for the buyer to send money into the contract (after seller confirms)
+    // Function for the buyer to send money into the contract after seller confirmation
     function fundOrder(uint orderID) public payable {
         Order storage order = orders[orderID];
 
@@ -131,7 +133,7 @@ contract Escrow {
         require(msg.sender == order.buyer.buyerAddress, "Only the buyer can fund the order");
 
         // Ensure the order has been confirmed by the seller
-        require(order.status == OrderStatus.Confirmed, "Order must be confirmed by the seller first");
+        require(order.status == OrderStatus.SellerConfirmed, "Order must be confirmed by the seller first");
 
         // Ensure the buyer sends the exact order amount
         require(msg.value == order.orderAmount, "Buyer must transfer the exact order amount");
@@ -142,63 +144,81 @@ contract Escrow {
         // Update buyer's total spent
         order.buyer.totalSpent = msg.value;
 
-        // Emit event for funds being locked
-        emit FundsLocked(orderID, msg.value);
+        // Update the order status to BuyerFunded
+        order.status = OrderStatus.BuyerFunded;
+
+        // Emit event for buyer funding
+        emit BuyerFunded(orderID, msg.value);
+    }
+
+    // Function for the seller to confirm they have delivered the order
+    function deliverOrderBySeller(uint orderID) public {
+        Order storage order = orders[orderID];
+
+        // Ensure only the seller of the order can call this function
+        require(msg.sender == order.seller.sellerAddress, "Only the seller can confirm delivery");
+
+        // Ensure the order has been funded by the buyer
+        require(order.status == OrderStatus.BuyerFunded, "Order must be funded by the buyer");
+
+        // Mark the order as delivered by the seller
+        order.seller.hasDelivered = true;
+        order.status = OrderStatus.Delivered;
+
+        // Emit event for delivery confirmation by seller
+        emit OrderDeliveredBySeller(orderID);
+    }
+
+    // Function for the buyer to confirm receipt and release funds to seller
+    function confirmReceiptByBuyer(uint orderID) public {
+        Order storage order = orders[orderID];
+
+        // Ensure only the buyer of the order can call this function
+        require(msg.sender == order.buyer.buyerAddress, "Only the buyer can confirm receipt");
+
+        // Ensure the seller has confirmed delivery
+        require(order.status == OrderStatus.Delivered, "Seller must confirm delivery first");
+
+        // Apply penalty if the seller delivered late
+        applyPenalty(orderID);
+
+        // Calculate the amount to be sent to the seller (after penalties)
+        uint amountToSeller = order.escrowBalance - order.buyer.penaltyAmount;
+
+        // Transfer the funds to the seller
+        payable(order.seller.sellerAddress).transfer(amountToSeller);
+
+        // Mark the order as fully processed and funds released
+        order.status = OrderStatus.Released;
+        order.seller.finalAmountToReceive = amountToSeller;
+
+        // Emit event for receipt confirmation by buyer and fund release
+        emit ReceiptConfirmedByBuyer(orderID);
+        emit FundsReleased(orderID, amountToSeller, order.buyer.penaltyAmount);
     }
 
     // Function to apply the 2% penalty for every 24 hours after delivery deadline
-    function applyPenalty(uint orderID) public {
+    function applyPenalty(uint orderID) internal {
         Order storage order = orders[orderID];
 
         // Ensure the delivery deadline has passed
-        require(block.timestamp > order.deliveryTimestamp, "Delivery deadline has not passed yet");
+        if (block.timestamp > order.deliveryTimestamp) {
+            // Calculate how many 24-hour intervals have passed since the delivery timestamp
+            uint timePassed = block.timestamp - order.deliveryTimestamp;
+            uint penaltyIntervals = timePassed / penaltyInterval;
 
-        // Calculate how many 24-hour intervals have passed since the delivery timestamp
-        uint timePassed = block.timestamp - order.deliveryTimestamp;
-        uint penaltyIntervals = timePassed / penaltyInterval;
+            // Calculate the penalty (2% for each interval)
+            uint penaltyAmount = (order.orderAmount * penaltyRate * penaltyIntervals) / 100;
 
-        // Calculate the penalty (2% for each interval)
-        uint penaltyAmount = (order.orderAmount * penaltyRate * penaltyIntervals) / 100;
+            // Ensure that the penalty doesn't exceed the escrow balance
+            if (penaltyAmount > order.escrowBalance) {
+                penaltyAmount = order.escrowBalance;
+            }
 
-        // Ensure that the penalty doesn't exceed the escrow balance
-        if (penaltyAmount > order.escrowBalance) {
-            penaltyAmount = order.escrowBalance;
+            // Deduct the penalty from the escrow balance and add it to the buyer's refund balance
+            order.escrowBalance -= penaltyAmount;
+            order.buyer.penaltyAmount += penaltyAmount;
+            order.buyer.refundBalance += penaltyAmount;
         }
-
-        // Deduct the penalty from the escrow balance and add it to the buyer's refund balance
-        order.escrowBalance -= penaltyAmount;
-        order.buyer.penaltyAmount += penaltyAmount;
-        order.buyer.refundBalance += penaltyAmount;
-
-        // Emit event for penalty application
-        emit PenaltyApplied(orderID, penaltyAmount, order.buyer.refundBalance);
     }
-
-    // Function to get buyer details (only the buyer can access this)
-    function getBuyerDetails(uint orderID) public view returns (address, uint, bool, uint, uint) {
-        require(msg.sender == orders[orderID].buyer.buyerAddress, "Only the buyer can access their details");
-        Buyer storage buyer = orders[orderID].buyer;
-        return (
-            buyer.buyerAddress,
-            buyer.totalSpent,
-            buyer.isConfirmed,
-            buyer.refundBalance,
-            buyer.penaltyAmount
-        );
-    }
-
-    // Function to get seller details (only the seller can access this)
-    function getSellerDetails(uint orderID) public view returns (address, uint, bool, uint, uint) {
-        require(msg.sender == orders[orderID].seller.sellerAddress, "Only the seller can access their details");
-        Seller storage seller = orders[orderID].seller;
-        return (
-            seller.sellerAddress,
-            seller.totalEarned,
-            seller.isConfirmed,
-            seller.finalAmountToReceive,
-            seller.penaltyAmount
-        );
-    }
-
- 
 }
