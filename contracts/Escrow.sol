@@ -37,7 +37,7 @@ contract Escrow {
     }
 
     // Enum for order status
-    enum OrderStatus { Pending, SellerConfirmed, BuyerFunded, Delivered, BuyerConfirmed, Released, Refunded }
+    enum OrderStatus { Pending, SellerConfirmed, BuyerFunded, Delivered, BuyerConfirmed, Released, Refunded, cancelled }
 
     // Mapping to store orders by ID
     mapping(uint => Order) public orders;
@@ -48,6 +48,8 @@ contract Escrow {
     // Penalty constants
     uint public constant penaltyRate = 2; // 2% penalty per 24 hours
     uint public constant penaltyInterval = 86400; // 24 hours in seconds
+    uint public constant cancellationFee = 5; // 5% cancellation fee for deposited orders
+
 
     // Events for order-related actions
     event OrderCreated(uint indexed orderID, address indexed buyer, address indexed seller, uint orderAmount, uint quantity);
@@ -56,6 +58,8 @@ contract Escrow {
     event OrderDeliveredBySeller(uint indexed orderID);
     event ReceiptConfirmedByBuyer(uint indexed orderID);
     event FundsReleased(uint indexed orderID, uint amountReleased, uint penaltyDeducted);
+    event OrderCanceled(uint indexed orderID, uint refundAmount, uint cancellationFee);
+
 
     // Function to create a new order (buyer creates the order)
     function createOrder(
@@ -123,6 +127,10 @@ contract Escrow {
 
         // Emit event for seller confirmation
         emit SellerConfirmed(orderID, deliveryPeriodInDays);
+
+
+        // Emit event for seller confirmation
+        emit SellerConfirmed(orderID, deliveryPeriodInDays);
     }
 
     // Function for the buyer to send money into the contract after seller confirmation
@@ -159,7 +167,7 @@ contract Escrow {
         require(msg.sender == order.seller.sellerAddress, "Only the seller can confirm delivery");
 
         // Ensure the order has been funded by the buyer
-        require(order.status == OrderStatus.BuyerFunded, "Order must be funded by the buyer");
+        require(order.escrowBalance > 0, "Order must be funded by the buyer");
 
         // Mark the order as delivered by the seller
         order.seller.hasDelivered = true;
@@ -169,7 +177,7 @@ contract Escrow {
         emit OrderDeliveredBySeller(orderID);
     }
 
-    // Function for the buyer to confirm receipt and release funds to seller
+  // Function for the buyer to confirm receipt and release funds to seller
     function confirmReceiptByBuyer(uint orderID) public {
         Order storage order = orders[orderID];
 
@@ -221,4 +229,42 @@ contract Escrow {
             order.buyer.refundBalance += penaltyAmount;
         }
     }
+
+    // Function to cancel the order
+        function cancelOrder(uint orderID) public {
+            Order storage order = orders[orderID];
+
+            // Only the buyer can cancel the order
+            require(msg.sender == order.buyer.buyerAddress, "Only the buyer can cancel the order");
+
+            // Ensure the order is not already canceled, delivered, or completed
+            require(order.status != OrderStatus.Delivered && order.status != OrderStatus.Released && order.status != OrderStatus.Canceled, "Order cannot be canceled at this stage");
+
+            uint refundAmount;
+            uint fee = 0;
+
+            // Check if the buyer has funded the contract
+            if (order.escrowBalance == 0) {
+                // Case 1: Buyer cancels before funding the contract (no cancellation fee)
+                refundAmount = 0; // No funds were deposited yet, so no refund.
+            } else {
+                // Case 2: Buyer cancels after funding the contract (5% cancellation fee)
+                fee = (order.escrowBalance * cancellationFee) / 100; // 5% of the deposited amount
+                refundAmount = order.escrowBalance - fee;
+
+                // Transfer the fee to the seller
+                payable(order.seller.sellerAddress).transfer(fee);
+
+                // Refund the remaining amount to the buyer
+                payable(order.buyer.buyerAddress).transfer(refundAmount);
+            }
+
+            // Mark the order as canceled
+            order.status = OrderStatus.Canceled;
+
+            // Emit event for order cancellation
+            emit OrderCanceled(orderID, refundAmount, fee);
+        }
+
+
 }
