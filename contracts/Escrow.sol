@@ -101,4 +101,62 @@ contract Escrow {
         emit OrderCreated(orderCounter, msg.sender, _sellerAddress, _orderAmount, _quantity);
     }
 
+    // Function to calculate and deduct penalty if deadline is missed
+    function applyPenalty(uint orderID) public {
+        Order storage order = orders[orderID];
+
+        // Ensure the deadline has passed
+        require(block.timestamp > order.expirationTimestamp, "Deadline not yet reached");
+
+        // Calculate how many 24-hour periods have passed since the expiration timestamp
+        uint timePassed = block.timestamp - order.expirationTimestamp;
+        uint penaltyCycles = timePassed / penaltyInterval;
+
+        // Ensure that at least one penalty cycle has passed
+        require(penaltyCycles > 0, "No penalty to apply");
+
+        // Calculate the penalty amount (2% per 24 hours)
+        uint penaltyAmount = (order.orderAmount * penaltyRate * penaltyCycles) / 100;
+
+        // Ensure the penalty doesn't exceed the escrow balance
+        if (penaltyAmount > order.escrowBalance) {
+            penaltyAmount = order.escrowBalance;
+        }
+
+        // Deduct the penalty from the escrow balance and add to buyer's refund
+        order.escrowBalance -= penaltyAmount;
+        order.buyer.penaltyAmount += penaltyAmount;
+        order.buyer.refundBalance += penaltyAmount;
+
+        // Emit event for penalty deduction
+        emit PenaltyDeducted(orderID, penaltyAmount, order.escrowBalance);
+    }
+
+    // Function to get buyer details (only the buyer can access this)
+    function getBuyerDetails(uint orderID) public view returns (address, uint, bool, uint, uint) {
+        require(msg.sender == orders[orderID].buyer.buyerAddress, "Only the buyer can access their details");
+        Buyer storage buyer = orders[orderID].buyer;
+        return (
+            buyer.buyerAddress,
+            buyer.totalSpent,
+            buyer.isConfirmed,
+            buyer.refundBalance,
+            buyer.penaltyAmount
+        );
+    }
+
+    // Function to get seller details (only the seller can access this)
+    function getSellerDetails(uint orderID) public view returns (address, uint, bool, uint, uint) {
+        require(msg.sender == orders[orderID].seller.sellerAddress, "Only the seller can access their details");
+        Seller storage seller = orders[orderID].seller;
+        return (
+            seller.sellerAddress,
+            seller.totalEarned,
+            seller.isConfirmed,
+            seller.finalAmountToReceive,
+            seller.penaltyAmount
+        );
+    }
+
+
 }
