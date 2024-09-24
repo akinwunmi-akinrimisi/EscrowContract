@@ -131,7 +131,117 @@ describe("Escrow", function () {
         escrow.connect(buyer).fundOrder(1, { value: ethers.parseUnits("50", 6) }) // Sending 50 instead of 100
       ).to.be.revertedWith("Buyer must transfer the exact order amount");
     });
+  });
+  
+  describe("deliverOrderBySeller", function () {
+    it("Should revert if the caller is not the seller", async function () {
+      const { escrow, buyer, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(buyer).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Seller confirms the order
+      await escrow.connect(seller).confirmOrderBySeller(1, 5);
+  
+      // Buyer funds the order
+      await escrow.connect(buyer).fundOrder(1, { value: ethers.parseUnits("100", 6) });
+  
+      // Attempt to confirm delivery by the buyer (instead of the seller) and expect it to revert
+      await expect(
+        escrow.connect(buyer).deliverOrderBySeller(1)
+      ).to.be.revertedWith("Only the seller can confirm delivery");
+    });
+
+    it("Should revert if the order has not been funded by the buyer", async function () {
+      const { escrow, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(seller).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Seller confirms the order
+      await escrow.connect(seller).confirmOrderBySeller(1, 5);
+  
+      // Attempt to confirm delivery without the buyer funding the order and expect it to revert
+      await expect(
+        escrow.connect(seller).deliverOrderBySeller(1)
+      ).to.be.revertedWith("Order must be funded by the buyer");
+    });
+  });
+  
+  describe("confirmReceiptByBuyer", function () {
+    it("Should revert if the caller is not the buyer", async function () {
+      const { escrow, buyer, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(buyer).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Seller confirms the order
+      await escrow.connect(seller).confirmOrderBySeller(1, 5);
+  
+      // Buyer funds the order
+      await escrow.connect(buyer).fundOrder(1, { value: ethers.parseUnits("100", 6) });
+  
+      // Seller confirms delivery
+      await escrow.connect(seller).deliverOrderBySeller(1);
+  
+      // Attempt to confirm receipt by the seller (instead of the buyer) and expect it to revert
+      await expect(
+        escrow.connect(seller).confirmReceiptByBuyer(1)
+      ).to.be.revertedWith("Only the buyer can confirm receipt");
+    });
+
+    it("Should revert if the seller has not confirmed delivery", async function () {
+      const { escrow, buyer, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(buyer).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Seller confirms the order
+      await escrow.connect(seller).confirmOrderBySeller(1, 5);
+  
+      // Buyer funds the order
+      await escrow.connect(buyer).fundOrder(1, { value: ethers.parseUnits("100", 6) });
+  
+      // Attempt to confirm receipt by the buyer before the seller confirms delivery and expect it to revert
+      await expect(
+        escrow.connect(buyer).confirmReceiptByBuyer(1)
+      ).to.be.revertedWith("Seller must confirm delivery first");
+    });
+  });
+
+  describe("cancelOrder", function () {
+    it("Should revert if the caller is not the buyer", async function () {
+      const { escrow, buyer, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(buyer).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Attempt to cancel the order by the seller (instead of the buyer) and expect it to revert
+      await expect(
+        escrow.connect(seller).cancelOrder(1)
+      ).to.be.revertedWith("Only the buyer can cancel the order");
+    });
     
+    it("Should revert if the order has already been delivered, released, or canceled", async function () {
+      const { escrow, buyer, seller } = await loadFixture(deployEscrowFixture);
+  
+      // Buyer creates an order
+      await escrow.connect(buyer).createOrder(seller.address, ethers.parseUnits("100", 6), 1);
+  
+      // Seller confirms the order
+      await escrow.connect(seller).confirmOrderBySeller(1, 5);
+  
+      // Buyer funds the order
+      await escrow.connect(buyer).fundOrder(1, { value: ethers.parseUnits("100", 6) });
+  
+      // Seller confirms delivery
+      await escrow.connect(seller).deliverOrderBySeller(1);
+  
+      // Attempt to cancel the order after delivery and expect it to revert
+      await expect(
+        escrow.connect(buyer).cancelOrder(1)
+      ).to.be.revertedWith("Order cannot be canceled at this stage");
+    });
   });
   
   
