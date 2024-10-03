@@ -1,8 +1,13 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
-import "dotenv/config"
+import "dotenv/config";
 
-const { SEPOLIA_RPC_URL, ACCOUNT_PRIVATE_KEY, ETHERSCAN_API_KEY, ALCHEMY_API_KEY_URL } = process.env;
+const {
+  SEPOLIA_RPC_URL,
+  ACCOUNT_PRIVATE_KEY,
+  ETHERSCAN_API_KEY,
+  ALCHEMY_API_KEY_URL,
+} = process.env;
 
 const config: HardhatUserConfig = {
   solidity: "0.8.24",
@@ -10,12 +15,11 @@ const config: HardhatUserConfig = {
     hardhat: {
       forking: {
         url: ALCHEMY_API_KEY_URL!,
-      }
+      },
     },
     sepolia: {
       url: SEPOLIA_RPC_URL || "",
-      accounts:
-          ACCOUNT_PRIVATE_KEY !== undefined ? [ACCOUNT_PRIVATE_KEY] : []
+      accounts: ACCOUNT_PRIVATE_KEY !== undefined ? [ACCOUNT_PRIVATE_KEY] : [],
     },
     // for testnet
     "lisk-sepolia": {
@@ -42,9 +46,7 @@ const config: HardhatUserConfig = {
   },
   sourcify: {
     enabled: false,
-  }
+  },
 };
-
-
 
 export default config;
